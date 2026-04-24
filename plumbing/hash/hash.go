@@ -101,6 +101,12 @@ func (h Hash) IsZero() bool {
 	return h == ZeroHash
 }
 
+// Equal reports whether h and other represent the same hash.
+// This is a convenience method to avoid direct array comparison at call sites.
+func (h Hash) Equal(other Hash) bool {
+	return h == other
+}
+
 // hexToByte converts two hex characters to a byte.
 func hexToByte(hi, lo byte) (byte, error) {
 	h, err := hexVal(hi)
