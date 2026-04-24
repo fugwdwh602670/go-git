@@ -69,6 +69,7 @@ func Sum(algo Algorithm, data []byte) ([]byte, error) {
 // FromHex parses a hex-encoded hash string into a Hash.
 // Note: only SHA1 (40-char) hashes are supported by the Hash type;
 // SHA256 hashes would require a larger fixed-size array.
+// Both uppercase and lowercase hex characters are accepted.
 func FromHex(s string) (Hash, error) {
 	if len(s) != 40 {
 		return ZeroHash, fmt.Errorf("invalid hash length: expected 40, got %d", len(s))
