@@ -1,80 +1,126 @@
-// Package hash provides a way for managing the
-// underlying hash implementations used across go-git.
+// Package hash provides hashing utilities for git objects.
+// It supports multiple hash algorithms including SHA1 and SHA256.
 package hash
 
 import (
 	"crypto"
-	"errors"
+	_ "crypto/sha1"
+	_ "crypto/sha256"
 	"fmt"
 	"hash"
-
-	"github.com/pjbgf/sha1cd"
-
-	format "github.com/go-git/go-git/v6/plumbing/format/config"
 )
 
-// ErrUnsupportedHashFunction is returned when an unsupported hash function is used.
-var ErrUnsupportedHashFunction = errors.New("unsupported hash function")
+// Hash represents a git object hash.
+type Hash [20]byte
 
-// algos is a map of hash algorithms.
-var algos = map[crypto.Hash]func() hash.Hash{}
+// ZeroHash is a Hash with all bytes set to zero.
+var ZeroHash Hash
 
-func init() {
-	reset()
+// Algorithm represents the hashing algorithm used.
+type Algorithm uint
+
+const (
+	// SHA1 is the SHA-1 hashing algorithm (default for git).
+	SHA1 Algorithm = iota
+	// SHA256 is the SHA-256 hashing algorithm (used in git 2.29+).
+	SHA256
+)
+
+// algos maps Algorithm to crypto.Hash.
+var algos = map[Algorithm]crypto.Hash{
+	SHA1:   crypto.SHA1,
+	SHA256: crypto.SHA256,
 }
 
-// reset resets the default algos value. Can be used after running tests
-// that registers new algorithms to avoid side effects.
-func reset() {
-	algos[crypto.SHA1] = sha1cd.New
-	algos[crypto.SHA256] = crypto.SHA256.New
-}
-
-// RegisterHash allows for the hash algorithm used to be overridden.
-// This ensures the hash selection for go-git must be explicit, when
-// overriding the default value.
-func RegisterHash(h crypto.Hash, f func() hash.Hash) error {
-	if f == nil {
-		return fmt.Errorf("cannot register hash: f is nil")
-	}
-
-	switch h {
-	case crypto.SHA1:
-		algos[h] = f
-	case crypto.SHA256:
-		algos[h] = f
-	default:
-		return fmt.Errorf("%w: %v", ErrUnsupportedHashFunction, h)
-	}
-	return nil
-}
-
-// Hash is the same as hash.Hash. This allows consumers
-// to not having to import this package alongside "hash".
-type Hash interface {
-	hash.Hash
-}
-
-// New returns a new Hash for the given hash function.
-// It panics if the hash function is not registered.
-func New(h crypto.Hash) Hash {
-	hh, ok := algos[h]
+// CryptoType returns the crypto.Hash for the given Algorithm.
+func (a Algorithm) CryptoType() (crypto.Hash, error) {
+	h, ok := algos[a]
 	if !ok {
-		panic(fmt.Sprintf("hash algorithm not registered: %v", h))
+		return 0, fmt.Errorf("unsupported hash algorithm: %d", a)
 	}
-	return hh()
+	return h, nil
 }
 
-// FromObjectFormat returns the correct Hash to be used based on the
-// ObjectFormat being used.
-// If the ObjectFormat is not recognised, returns ErrInvalidObjectFormat.
-func FromObjectFormat(f format.ObjectFormat) (hash.Hash, error) {
-	switch f {
-	case format.SHA1:
-		return New(crypto.SHA1), nil
-	case format.SHA256:
-		return New(crypto.SHA256), nil
+// New returns a new hash.Hash for the given Algorithm.
+func New(algo Algorithm) (hash.Hash, error) {
+	cryptoHash, err := algo.CryptoType()
+	if err != nil {
+		return nil, err
+	}
+	if !cryptoHash.Available() {
+		return nil, fmt.Errorf("hash algorithm not available: %v", cryptoHash)
+	}
+	return cryptoHash.New(), nil
+}
+
+// Sum computes the hash of data using the given Algorithm.
+func Sum(algo Algorithm, data []byte) ([]byte, error) {
+	h, err := New(algo)
+	if err != nil {
+		return nil, err
+	}
+	_, err = h.Write(data)
+	if err != nil {
+		return nil, fmt.Errorf("writing data to hash: %w", err)
+	}
+	return h.Sum(nil), nil
+}
+
+// FromHex parses a hex-encoded hash string into a Hash.
+func FromHex(s string) (Hash, error) {
+	if len(s) != 40 {
+		return ZeroHash, fmt.Errorf("invalid hash length: expected 40, got %d", len(s))
+	}
+	var h Hash
+	for i := 0; i < 20; i++ {
+		b, err := hexToByte(s[i*2], s[i*2+1])
+		if err != nil {
+			return ZeroHash, fmt.Errorf("invalid hex character at position %d: %w", i*2, err)
+		}
+		h[i] = b
+	}
+	return h, nil
+}
+
+// String returns the hex-encoded representation of the Hash.
+func (h Hash) String() string {
+	const hexChars = "0123456789abcdef"
+	buf := make([]byte, 40)
+	for i, b := range h {
+		buf[i*2] = hexChars[b>>4]
+		buf[i*2+1] = hexChars[b&0x0f]
+	}
+	return string(buf)
+}
+
+// IsZero reports whether the hash is the zero hash.
+func (h Hash) IsZero() bool {
+	return h == ZeroHash
+}
+
+// hexToByte converts two hex characters to a byte.
+func hexToByte(hi, lo byte) (byte, error) {
+	h, err := hexVal(hi)
+	if err != nil {
+		return 0, err
+	}
+	l, err := hexVal(lo)
+	if err != nil {
+		return 0, err
+	}
+	return (h << 4) | l, nil
+}
+
+// hexVal converts a single hex character to its numeric value.
+func hexVal(c byte) (byte, error) {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0', nil
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10, nil
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10, nil
 	default:
-		return nil, format.ErrInvalidObjectFormat
+		return 0, fmt.Errorf("invalid hex character: %q", c)
 	}
 }
