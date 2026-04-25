@@ -121,6 +121,7 @@ func hexToByte(hi, lo byte) (byte, error) {
 }
 
 // hexVal converts a single hex character to its numeric value.
+// Returns an error if the character is not a valid hex digit.
 func hexVal(c byte) (byte, error) {
 	switch {
 	case c >= '0' && c <= '9':
